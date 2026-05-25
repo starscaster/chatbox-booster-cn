@@ -11,9 +11,9 @@
 - [简介](#-简介)
 - [功能特性](#-功能特性)
 - [安装](#-安装)
+- [配置 MCP 客户端](#-配置-mcp-客户端)
 - [工具一览](#-工具一览)
 - [配置](#️-配置)
-- [配置 MCP 客户端](#-配置-mcp-客户端)
 - [使用示例](#-使用示例)
 - [项目结构](#-项目结构)
 - [未来计划](#-未来计划)
@@ -72,6 +72,79 @@ pip install -r requirements.txt
 # 4. 验证安装
 python server.py --help
 ```
+
+---
+
+## 🖥️ 配置 MCP 客户端
+
+安装完成后，需要在你的 MCP 客户端（如 Chatbox、Claude Desktop 等）中配置此工具集。配置方式是在客户端的 MCP 配置中添加一个 JSON 条目。
+
+### 获取脚本路径
+
+```bash
+# Windows (在项目目录中执行)
+cd /d "你的项目路径"
+echo %cd%\server.py
+
+# macOS / Linux (在项目目录中执行)
+pwd
+# 将输出的路径后面加上 /server.py
+```
+
+> 💡 **使用虚拟环境时**，需要指定虚拟环境中的 Python 解释器路径，而非系统 Python：
+> - **Windows:** `.venv\Scripts\python.exe`
+> - **macOS / Linux:** `.venv/bin/python`
+
+### 配置 JSON（直接使用，仅需填入路径）
+
+以下 JSON 覆盖了本项目的所有工具，**直接复制**到你的 MCP 客户端配置中，将 `<项目路径>` 替换为实际的绝对路径即可：
+
+#### Windows
+
+```json
+{
+  "mcpServers": {
+    "chatbox-booster": {
+      "command": "<项目路径>\\.venv\\Scripts\\python.exe",
+      "args": [
+        "<项目路径>\\server.py"
+      ],
+      "env": {}
+    }
+  }
+}
+```
+
+#### macOS / Linux
+
+```json
+{
+  "mcpServers": {
+    "chatbox-booster": {
+      "command": "<项目路径>/.venv/bin/python",
+      "args": [
+        "<项目路径>/server.py"
+      ],
+      "env": {}
+    }
+  }
+}
+```
+
+### Chatbox 配置指引
+
+1. 打开 Chatbox，进入 **设置 → MCP 服务器**
+2. 点击 **添加 MCP 服务器**
+3. 将上方对应系统的 JSON 粘贴到配置框中
+4. 将 `<项目路径>` 替换为实际的绝对路径（例如 `C:/Users/你的用户名/chatbox-booster` 或 `/home/用户/chatbox-booster`）
+5. 保存配置，Chatbox 将自动启动 MCP 服务
+6. 在对话中即可使用联网搜索、PDF 阅读等工具
+
+> ⚠️ **注意**：路径分隔符请使用 `/` 或 `\\`，避免使用单个 `\`（Chatbox 中会被转义）。
+
+### Claude Desktop 配置指引
+
+编辑 Claude Desktop 的配置文件 `claude_desktop_config.json`，将上面的 JSON 合并到其中的 `mcpServers` 字段即可。
 
 ---
 
