@@ -1,0 +1,7 @@
+fastmcp
+aiohttp
+pypdf
+ddgs
+lxml
+requests
+tiktoken
