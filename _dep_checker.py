@@ -55,17 +55,27 @@ def ensure_deps(package_map: Dict[str, str]) -> bool:
 
     for pkg in missing:
         try:
-            cmd = [sys.executable, "-m", "pip", "install", pkg, "--quiet"]
+            cmd = [sys.executable, "-m", "pip", "install", pkg]
             if index_url:
                 cmd.extend(["-i", index_url])
-            subprocess.check_call(
+            result = subprocess.run(
                 cmd,
-                stdout=subprocess.DEVNULL,
-                stderr=subprocess.DEVNULL,
+                capture_output=True,
+                text=True,
             )
+            if result.returncode != 0:
+                print(f"[ERROR] Failed to install {pkg} (exit code {result.returncode})",
+                      file=sys.stderr)
+                err_output = result.stderr.strip() or result.stdout.strip()
+                if err_output:
+                    print(f"[ERROR] pip says:\n{err_output}", file=sys.stderr)
+                return False
             print(f"[INFO]  ✓ {pkg} installed")
-        except subprocess.CalledProcessError as e:
-            print(f"[ERROR] Failed to install {pkg}: {e}", file=sys.stderr)
+        except FileNotFoundError:
+            print(f"[ERROR] Python executable not found: {sys.executable}", file=sys.stderr)
+            return False
+        except Exception as e:
+            print(f"[ERROR] Unexpected error installing {pkg}: {e}", file=sys.stderr)
             return False
 
     return True

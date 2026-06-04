@@ -4,18 +4,161 @@ import re
 from html.parser import HTMLParser
 from pathlib import Path
 
+# ----- 依赖检查 -----
 from _dep_checker import ensure_deps
 ensure_deps({
-    "aiohttp": "aiohttp",
+    "curl_cffi": "curl_cffi",
     "lxml": "lxml",
+    "tiktoken": "tiktoken",
 })
 
-import aiohttp
+import tiktoken
+from curl_cffi import requests as curl_requests
 from lxml import html as lxml_html
 from lxml.etree import ParseError
 
 
 _SCRIPT_DIR = Path(__file__).resolve().parent
+
+_TOKENIZER = None
+
+
+def _get_tokenizer():
+    global _TOKENIZER
+    if _TOKENIZER is None:
+        _TOKENIZER = tiktoken.get_encoding("cl100k_base")
+    return _TOKENIZER
+
+
+def _count_tokens(text: str) -> int:
+    encoder = _get_tokenizer()
+    return len(encoder.encode(text))
+
+
+def _truncate_by_tokens(text: str, max_tokens: int) -> str:
+    # 使用 OpenAI 的 cl100k_base 编码器
+    # 按 token 数量截断文本
+    encoder = _get_tokenizer()
+    token_ids = encoder.encode(text)
+    if len(token_ids) <= max_tokens:
+        return text
+    truncated_ids = token_ids[:max_tokens]
+    return encoder.decode(truncated_ids)
+
+
+SAFE_REMOVE_PATTERNS = [
+    re.compile(r'^\[\d+\]$'),
+    re.compile(r'^\(\d+\)$'),
+    re.compile(r'^\d+\.$'),
+    re.compile(r'^Fig\.\s*\d+$'),
+    re.compile(r'^Table\s*\d+$'),
+]
+
+
+def _clean_reference_noise(text: str) -> str:
+    words = text.split()
+    cleaned: list[str] = []
+    for w in words:
+        core = w.rstrip(".,;:!?)")
+        if any(p.match(core) for p in SAFE_REMOVE_PATTERNS):
+            suff = w[len(core):]
+            if suff:
+                cleaned.append(suff)
+            continue
+        cleaned.append(w)
+    result = " ".join(cleaned)
+    result = re.sub(r'\s([.,;:!?)])', r'\1', result)
+    result = re.sub(r'[,;]\s*[,;]', ',', result)
+    return result
+
+
+_JSON_TEXT_KEYS = {"content", "text", "title", "description", "body", "summary",
+                   "message", "own_text", "excerpt_title", "excerpt", "subject",
+                   "name", "question_title", "answer_content", "headline"}
+
+
+_JSON_SKIP_KEYS = {
+    "id", "type", "state", "url", "href", "source_pin_id",
+    "created", "updated", "is_deleted", "self_create",
+    "view_permission", "comment_permission", "can_top", "is_top",
+    "is_admin_close_repin", "admin_closed_comment",
+    "meet_reaction_guide_conditions",
+    "like_count", "comment_count", "repin_count", "reaction_count",
+    "favorite_count", "favlists_count", "page_view_count", "voteup_count",
+    "thumbnail", "width", "height", "is_watermark", "watermark_url",
+    "original_url", "is_gif", "is_long", "text_link_type", "fold_type",
+    "content_html", "url_token", "avatar_url", "avatar_url_template",
+    "badge", "badge_v2", "user_type", "is_org", "is_advertiser",
+}
+
+
+def _strip_html_from_text(text: str) -> str:
+    if not re.search(r'<[^>]+>', text):
+        return text
+    return re.sub(r'<[^>]+>', '', text)
+
+
+def _dedup_texts(texts: list[str]) -> list[str]:
+    if len(texts) <= 1:
+        return texts
+    result: list[str] = []
+    for t in texts:
+        tn = re.sub(r'\s+', '', t)
+        if len(tn) < 8:
+            continue
+        dup = False
+        for i, existing in enumerate(result):
+            en = re.sub(r'\s+', '', existing)
+            if tn == en:
+                dup = True
+                break
+            if len(tn) > len(en) and en in tn:
+                result[i] = t
+                dup = True
+                break
+            if len(en) >= len(tn) and tn in en:
+                dup = True
+                break
+        if not dup:
+            result.append(t)
+    return result
+
+
+def _extract_text_from_json(data, text_only: bool = True) -> str:
+
+    def _walk(obj, depth=0):
+        if depth > 20:
+            return
+        if isinstance(obj, str):
+            if len(obj.strip()) >= 8:
+                yield _strip_html_from_text(obj)
+        elif isinstance(obj, dict):
+            extracted_any = False
+            for key in _JSON_TEXT_KEYS:
+                if key in obj:
+                    val = obj[key]
+                    if isinstance(val, str) and len(val.strip()) >= 8:
+                        extracted_any = True
+                        yield _strip_html_from_text(val)
+                    elif isinstance(val, list):
+                        extracted_any = True
+                        for item in val:
+                            yield from _walk(item, depth + 1)
+                    elif isinstance(val, dict):
+                        extracted_any = True
+                        yield from _walk(val, depth + 1)
+            if not extracted_any:
+                for key, val in obj.items():
+                    if key not in _JSON_SKIP_KEYS:
+                        yield from _walk(val, depth + 1)
+        elif isinstance(obj, list):
+            for item in obj:
+                yield from _walk(item, depth + 1)
+
+    texts = _dedup_texts(list(_walk(data)))
+    if not texts:
+        return ""
+    return "\n\n".join(texts)
 
 
 class _WebpageLocale:
@@ -51,20 +194,52 @@ class _WebpageLocale:
         return text
 
 
+_VOID_TAGS = {"meta", "link", "br", "hr", "img", "input", "area", "base", "col",
+              "embed", "param", "source", "track", "wbr"}
+
+
 class _TextExtractor(HTMLParser):
-    def __init__(self):
+    def __init__(self, text_only: bool = False):
         super().__init__()
         self._text_chunks: list[str] = []
         self._skip_tags = {"script", "style", "noscript", "head", "meta", "link", "title"}
         self._skip_depth = 0
+        self._text_only = text_only
+        self._in_link = False
+        self._link_href = ""
+        self._link_text_chunks: list[str] = []
 
     def handle_starttag(self, tag: str, attrs: list[tuple[str, str | None]]) -> None:
         if tag in self._skip_tags:
+            if tag in _VOID_TAGS:
+                return
             self._skip_depth += 1
+            return
+        if tag == "a" and self._skip_depth == 0:
+            if not self._text_only:
+                attrs_dict = dict(attrs)
+                self._link_href = attrs_dict.get("href", "").strip()
+            self._in_link = True
+            self._link_text_chunks = []
 
     def handle_endtag(self, tag: str) -> None:
         if tag in self._skip_tags:
+            if tag in _VOID_TAGS:
+                return
             self._skip_depth = max(0, self._skip_depth - 1)
+            return
+        if tag == "a":
+            if self._skip_depth == 0 and self._link_href:
+                link_text = " ".join(self._link_text_chunks).strip()
+                if link_text:
+                    self._text_chunks.append(f"[{link_text}]({self._link_href})")
+                else:
+                    self._text_chunks.append(f"<{self._link_href}>")
+            elif self._skip_depth == 0:
+                self._text_chunks.extend(self._link_text_chunks)
+            self._in_link = False
+            self._link_href = ""
+            self._link_text_chunks = []
             return
         if tag in ("p", "br", "li", "h1", "h2", "h3", "h4", "h5", "h6", "div", "tr", "blockquote"):
             self._text_chunks.append("\n")
@@ -76,7 +251,10 @@ class _TextExtractor(HTMLParser):
             return
         stripped = data.strip()
         if stripped:
-            self._text_chunks.append(stripped)
+            if self._in_link:
+                self._link_text_chunks.append(stripped)
+            else:
+                self._text_chunks.append(stripped)
 
     def get_text(self) -> str:
         return " ".join(self._text_chunks)
@@ -100,7 +278,106 @@ HEADER_TAGS = {"h1", "h2", "h3", "h4", "h5", "h6"}
 NEWLINE_TAGS = {"p", "br", "li", "div", "tr", "blockquote"}
 
 
-def _lxml_extract_text(html_text: str) -> str:
+COMMENT_SELECTORS = [
+    '//*[@id="comments"]',
+    '//*[contains(@class, "comments-area")]',
+    '//*[contains(@class, "comment-list")]',
+    '//*[contains(@class, "comment-section")]',
+    '//section[contains(@class, "comments")]',
+    '//div[contains(@class, "comments")]',
+    '//*[@id="disqus_thread"]',
+]
+
+
+def _extract_page_metadata(tree) -> str:
+    meta_parts: list[str] = []
+
+    title_els = tree.xpath('//title')
+    title_text = ""
+    if title_els:
+        title_text = (title_els[0].text or "").strip()
+        if title_text:
+            meta_parts.append(f"**{_WebpageLocale.get('meta_title')}**: {title_text}")
+
+    desc_els = tree.xpath('//meta[@name="description"]/@content')
+    if desc_els and desc_els[0].strip():
+        meta_parts.append(f"**{_WebpageLocale.get('meta_description')}**: {desc_els[0].strip()}")
+
+    kw_els = tree.xpath('//meta[@name="keywords"]/@content')
+    if kw_els and kw_els[0].strip():
+        meta_parts.append(f"**{_WebpageLocale.get('meta_keywords')}**: {kw_els[0].strip()}")
+
+    og_title = tree.xpath('//meta[@property="og:title"]/@content')
+    if og_title and og_title[0].strip() and og_title[0].strip() != title_text:
+        meta_parts.append(f"**{_WebpageLocale.get('meta_og_title')}**: {og_title[0].strip()}")
+
+    og_desc = tree.xpath('//meta[@property="og:description"]/@content')
+    if og_desc and og_desc[0].strip():
+        meta_parts.append(f"**{_WebpageLocale.get('meta_og_description')}**: {og_desc[0].strip()}")
+
+    og_site = tree.xpath('//meta[@property="og:site_name"]/@content')
+    if og_site and og_site[0].strip():
+        meta_parts.append(f"**{_WebpageLocale.get('meta_site')}**: {og_site[0].strip()}")
+
+    og_type = tree.xpath('//meta[@property="og:type"]/@content')
+    if og_type and og_type[0].strip():
+        meta_parts.append(f"**{_WebpageLocale.get('meta_type')}**: {og_type[0].strip()}")
+
+    pub_time = tree.xpath('//meta[@property="article:published_time"]/@content')
+    if pub_time and pub_time[0].strip():
+        meta_parts.append(f"**{_WebpageLocale.get('meta_published')}**: {pub_time[0].strip()}")
+
+    mod_time = tree.xpath('//meta[@property="article:modified_time"]/@content')
+    if mod_time and mod_time[0].strip():
+        meta_parts.append(f"**{_WebpageLocale.get('meta_modified')}**: {mod_time[0].strip()}")
+
+    author_els = tree.xpath(
+        '//meta[@property="article:author"]/@content | //meta[@name="author"]/@content'
+    )
+    if author_els and author_els[0].strip():
+        meta_parts.append(f"**{_WebpageLocale.get('meta_author')}**: {author_els[0].strip()}")
+
+    canonical = tree.xpath('//link[@rel="canonical"]/@href')
+    if canonical and canonical[0].strip():
+        meta_parts.append(f"**{_WebpageLocale.get('meta_canonical')}**: {canonical[0].strip()}")
+
+    time_els = tree.xpath('//time[@datetime]')
+    for t in time_els[:3]:
+        dt = (t.get("datetime") or "").strip()
+        txt = "".join(t.itertext()).strip()
+        if dt:
+            meta_parts.append(f"**{_WebpageLocale.get('meta_time')}**: {txt} ({dt})" if txt else
+                            f"**{_WebpageLocale.get('meta_time')}**: {dt}")
+
+    if meta_parts:
+        return "\n".join(meta_parts) + "\n\n---\n\n"
+    return ""
+
+
+def _extract_comments(tree, main_container) -> str:
+    for selector in COMMENT_SELECTORS:
+        elements = tree.xpath(selector)
+        for el in elements:
+            if main_container is not None:
+                if el is main_container:
+                    continue
+                try:
+                    is_inside_main = False
+                    for ancestor in el.iterancestors():
+                        if ancestor is main_container:
+                            is_inside_main = True
+                            break
+                    if is_inside_main:
+                        continue
+                except Exception:
+                    pass
+            text = _tree_to_text(el)
+            if len(text.strip()) > 50:
+                return f"## {_WebpageLocale.get('meta_comments_header')}\n\n{text.strip()}"
+    return ""
+
+
+def _lxml_extract_text(html_text: str, text_only: bool = False) -> str:
     try:
         tree = lxml_html.fromstring(html_text)
     except ParseError:
@@ -112,7 +389,17 @@ def _lxml_extract_text(html_text: str) -> str:
         body = tree.xpath('//body')
         container = body[0] if body else tree
 
-    text = _tree_to_text(container)
+    text = _tree_to_text(container, text_only=text_only)
+
+    if not text_only:
+        comment_text = _extract_comments(tree, container)
+        if comment_text:
+            text = text.strip() + "\n\n---\n\n" + comment_text
+
+        metadata = _extract_page_metadata(tree)
+        if metadata:
+            text = metadata + text
+
     return text.strip()
 
 
@@ -131,17 +418,36 @@ def _find_content_container(tree):
     return None
 
 
-def _tree_to_text(node) -> str:
+def _tree_to_text(node, text_only: bool = False) -> str:
     parts = []
-    _walk(node, parts)
+    _walk(node, parts, text_only)
     raw = "".join(parts)
     raw = re.sub(r"[ \t]{2,}", " ", raw)
     raw = re.sub(r"\n{3,}", "\n\n", raw)
     return raw.strip()
 
 
-def _walk(node, parts):
-    if node.tag in ("script", "style", "noscript", "head", "meta", "link", "title", "nav", "footer", "header"):
+def _walk(node, parts, text_only: bool = False):
+    if node.tag in ("script", "style", "noscript", "head", "meta", "link", "title", "nav"):
+        return
+    if node.tag == "a":
+        if text_only:
+            link_text = "".join(node.itertext()).strip()
+            if link_text:
+                parts.append(link_text)
+        else:
+            href = (node.get("href") or "").strip()
+            link_text = "".join(node.itertext()).strip()
+            if href:
+                if link_text:
+                    parts.append(f"[{link_text}]({href})")
+                else:
+                    parts.append(f"<{href}>")
+            elif link_text:
+                parts.append(link_text)
+        tail = (node.tail or "").strip()
+        if tail and node.tag not in ("html", "body"):
+            parts.append(tail)
         return
     if node.tag in HEADER_TAGS:
         parts.append("\n")
@@ -154,7 +460,7 @@ def _walk(node, parts):
             parts.append("\n")
         elif tag == "td":
             parts.append(" | ")
-        _walk(child, parts)
+        _walk(child, parts, text_only)
     if node.tag in HEADER_TAGS:
         parts.append("\n")
     tail = (node.tail or "").strip()
@@ -162,12 +468,12 @@ def _walk(node, parts):
         parts.append(tail)
 
 
-def _extract_text_from_html(html: str) -> str:
-    text = _lxml_extract_text(html)
+def _extract_text_from_html(html: str, text_only: bool = False) -> str:
+    text = _lxml_extract_text(html, text_only=text_only)
     if text:
         return text
 
-    extractor = _TextExtractor()
+    extractor = _TextExtractor(text_only=text_only)
     try:
         extractor.feed(html)
     except Exception:
@@ -181,7 +487,8 @@ def _extract_text_from_html(html: str) -> str:
 async def fetch_webpage(
     url: str,
     timeout: int = 15,
-    max_chars: int = 8000,
+    max_tokens: int = 15000,
+    text_only: bool = True,
 ) -> str:
     """
     Open an HTTP/HTTPS webpage and return the plain text content.
@@ -189,7 +496,10 @@ async def fetch_webpage(
     Args:
         url: The webpage URL (must start with http:// or https://)
         timeout: Request timeout in seconds (default 15)
-        max_chars: Maximum characters to return (default 8000)
+        max_tokens: Maximum tokens to return (default 15000)
+        text_only: If True, return plain text only (no metadata, links, comments).
+                   If False, include page metadata, preserve URLs in markdown format,
+                   and extract comment sections. (default True)
 
     Returns:
         Extracted plain text content with source URL and status information.
@@ -197,292 +507,147 @@ async def fetch_webpage(
     if not url.startswith(("http://", "https://")):
         return _WebpageLocale.get("invalid_url", url=url)
 
-    try:
-        headers = {
-            "User-Agent": (
-                "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
-                "AppleWebKit/537.36 (KHTML, like Gecko) "
-                "Chrome/124.0.0.0 Safari/537.36"
-            ),
-            "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
-            "Accept-Language": "zh-CN,zh;q=0.9,en;q=0.8",
-        }
+    _BROWSER_HEADERS = {
+        "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8,application/signed-exchange;v=b3;q=0.7",
+        "Accept-Language": "zh-CN,zh;q=0.9,en;q=0.8,en-US;q=0.7",
+        "Accept-Encoding": "gzip, deflate, br",
+        "Cache-Control": "max-age=0",
+        "Sec-Ch-Ua": '"Chromium";v="131", "Not_A Brand";v="24"',
+        "Sec-Ch-Ua-Mobile": "?0",
+        "Sec-Ch-Ua-Platform": '"Windows"',
+        "Sec-Fetch-Dest": "document",
+        "Sec-Fetch-Mode": "navigate",
+        "Sec-Fetch-Site": "none",
+        "Sec-Fetch-User": "?1",
+        "Upgrade-Insecure-Requests": "1",
+    }
 
-        async with aiohttp.ClientSession() as session:
-            async with session.get(
-                url,
-                headers=headers,
-                timeout=aiohttp.ClientTimeout(total=timeout),
-                allow_redirects=True,
-                max_redirects=5,
-            ) as resp:
-                if resp.status != 200:
-                    return _WebpageLocale.get("status_not_200",
-                                              url=url, code=resp.status, reason=resp.reason)
+    _IMPERSONATE_CHAIN = ["chrome131", "chrome124", "firefox133"]
 
-                content_type = resp.headers.get("Content-Type", "")
-                if "text/html" not in content_type and "text/plain" not in content_type:
-                    return _WebpageLocale.get("unsupported_content_type",
-                                              url=url, code=resp.status, type=content_type)
+    curl_ok = False
+    curl_errors: list[str] = []
+    raw_body = ""
+    resp_status = 0
 
-                raw_body = await resp.text(errors="replace")
+    for impersonate_target in _IMPERSONATE_CHAIN:
+        try:
+            async with curl_requests.AsyncSession() as session:
+                resp = await session.get(
+                    url,
+                    impersonate=impersonate_target,
+                    headers=_BROWSER_HEADERS,
+                    timeout=timeout,
+                )
+                resp_status = resp.status_code
+                raw_body = resp.text
 
-        text = _extract_text_from_html(raw_body)
+                if 200 <= resp_status < 400:
+                    curl_ok = True
+                    break
 
-        if not text:
-            return _WebpageLocale.get("empty_content", url=url, code=resp.status)
+                reason = (resp.reason or "").strip() or "unknown"
+                curl_errors.append(
+                    f"[{impersonate_target}] {resp_status} {reason}"
+                )
+                continue
 
-        truncated = False
-        if len(text) > max_chars:
-            text = text[:max_chars]
-            truncated = True
+        except curl_requests.RequestsError as e:
+            curl_errors.append(f"[{impersonate_target}] RequestError: {str(e)[:200]}")
+            continue
+        except asyncio.TimeoutError:
+            return _WebpageLocale.get("timeout", timeout=timeout)
 
-        result = _WebpageLocale.get("success_header",
-                                     url=url, code=resp.status, length=len(text))
-        if truncated:
-            result += _WebpageLocale.get("truncated_suffix")
+    if not curl_ok:
+        from _patchright_fallback import playwright_fallback_fetch
+        pw_text = await playwright_fallback_fetch(
+            url=url,
+            raw_html=raw_body,
+            extracted_text="",
+            timeout=timeout,
+            text_only=text_only,
+            force=True,
+        )
+        if pw_text:
+            text = pw_text
+            if text_only:
+                text = _clean_reference_noise(text)
+            tokens = _count_tokens(text)
+            if tokens < 4000:
+                result = _WebpageLocale.get("success_header", code=200)
+                result += f"\n\n{text}"
+                return result
+            if tokens <= max_tokens:
+                result = _WebpageLocale.get("token_length", tokens=tokens, length=len(text))
+                result += f"\n\n{text}"
+                return result
+            truncated_text = _truncate_by_tokens(text, max_tokens)
+            truncated_tokens = _count_tokens(truncated_text)
+            pct = round((1 - truncated_tokens / tokens) * 100)
+            result = _WebpageLocale.get("token_truncated",
+                                         tokens=truncated_tokens,
+                                         pct=pct,
+                                         length=len(truncated_text))
+            result += f"\n\n{truncated_text}"
+            return result
+
+        summary = "; ".join(curl_errors[-3:]) if curl_errors else "no response"
+        return _WebpageLocale.get("curl_blocked_no_browser",
+                                  url=url, curl_detail=summary)
+
+    content_type = resp.headers.get("Content-Type", "")
+    is_json = "application/json" in content_type
+    if not is_json and "text/html" not in content_type and "text/plain" not in content_type:
+        return _WebpageLocale.get("unsupported_content_type",
+                                  url=url, code=resp_status, type=content_type)
+
+    if is_json:
+        try:
+            data = json.loads(raw_body)
+            text = _extract_text_from_json(data, text_only=text_only)
+        except json.JSONDecodeError:
+            text = raw_body
+    else:
+        text = _extract_text_from_html(raw_body, text_only=text_only)
+        if not text or len(text.strip()) < 200:
+            from _patchright_fallback import playwright_fallback_fetch
+            pw_text = await playwright_fallback_fetch(
+                url=url,
+                raw_html=raw_body,
+                extracted_text=text or "",
+                timeout=timeout,
+                text_only=text_only,
+            )
+            if pw_text:
+                text = pw_text
+
+    if not text:
+        return _WebpageLocale.get("empty_content", url=url, code=resp_status)
+
+    if text_only:
+        text = _clean_reference_noise(text)
+
+    tokens = _count_tokens(text)
+
+    if tokens < 4000:
+        result = _WebpageLocale.get("success_header", code=resp_status)
         result += f"\n\n{text}"
-
         return result
 
-    except aiohttp.ClientError as e:
-        return _WebpageLocale.get("network_error", error=str(e))
-    except asyncio.TimeoutError:
-        return _WebpageLocale.get("timeout", timeout=timeout)
-    except Exception as e:
-        return _WebpageLocale.get("parse_error", type=type(e).__name__, message=str(e))
+    if tokens <= max_tokens:
+        result = _WebpageLocale.get("token_length", tokens=tokens, length=len(text))
+        result += f"\n\n{text}"
+        return result
 
+    truncated_text = _truncate_by_tokens(text, max_tokens)
+    truncated_tokens = _count_tokens(truncated_text)
+    pct = round((1 - truncated_tokens / tokens) * 100)
 
-import sys
-import json
-import argparse
-import tkinter as tk
-from tkinter import ttk
-
-
-def parse_args():
-    parser = argparse.ArgumentParser(description="通用审批/确认弹窗（子进程模式）")
-    parser.add_argument("--title", default="确认操作", help="窗口标题")
-    parser.add_argument("--message", required=True, help="显示的消息内容")
-    parser.add_argument("--type", default="confirm",
-                        choices=["confirm", "choice", "input"],
-                        help="弹窗类型: confirm=确认/取消, choice=选项列表, input=文本输入")
-    parser.add_argument("--choices", default="", help="选项列表，逗号分隔（仅 type=choice 时使用）")
-    parser.add_argument("--timeout", type=int, default=180,
-                        help="超时秒数（默认180，<=0 为不限时）")
-    parser.add_argument("--default", default="", help="默认值（choice 时为首选项，input 时为预填文本）")
-    return parser.parse_args()
-
-
-def build_confirm(root, message, timeout):
-    result = {"status": "cancelled", "value": ""}
-    seconds_left = [timeout]
-
-    frame = ttk.Frame(root, padding=20)
-    frame.pack(fill="both", expand=True)
-
-    msg_label = ttk.Label(frame, text=message, wraplength=480, justify="left", font=("Microsoft YaHei", 10))
-    msg_label.pack(pady=(0, 15))
-
-    countdown_label = ttk.Label(frame, text="", foreground="gray")
-    if timeout > 0:
-        countdown_label.config(text=f"⏱ {timeout} 秒后自动取消")
-    countdown_label.pack()
-
-    btn_frame = ttk.Frame(frame)
-    btn_frame.pack(pady=(10, 0))
-
-    def on_approve():
-        result["status"] = "approved"
-        result["value"] = "confirmed"
-        root.destroy()
-
-    def on_cancel():
-        root.destroy()
-
-    approve_btn = ttk.Button(btn_frame, text="✓ 确认", command=on_approve, width=12)
-    approve_btn.pack(side="left", padx=5)
-
-    cancel_btn = ttk.Button(btn_frame, text="✗ 取消", command=on_cancel, width=12)
-    cancel_btn.pack(side="left", padx=5)
-
-    if timeout > 0:
-        def tick():
-            seconds_left[0] -= 1
-            if seconds_left[0] <= 0:
-                result["status"] = "timeout"
-                root.destroy()
-            else:
-                countdown_label.config(text=f"⏱ {seconds_left[0]} 秒后自动取消")
-                root.after(1000, tick)
-        root.after(1000, tick)
-
-    root.protocol("WM_DELETE_WINDOW", on_cancel)
-    root.bind("<Return>", lambda e: on_approve())
-    root.bind("<Escape>", lambda e: on_cancel())
+    result = _WebpageLocale.get("token_truncated",
+                                 tokens=truncated_tokens,
+                                 pct=pct,
+                                 length=len(truncated_text))
+    result += f"\n\n{truncated_text}"
     return result
 
 
-def build_choice(root, message, choices, timeout, default):
-    result = {"status": "cancelled", "value": ""}
-    seconds_left = [timeout]
 
-    frame = ttk.Frame(root, padding=20)
-    frame.pack(fill="both", expand=True)
-
-    msg_label = ttk.Label(frame, text=message, wraplength=480, justify="left", font=("Microsoft YaHei", 10))
-    msg_label.pack(pady=(0, 10))
-
-    choice_var = tk.StringVar(value=default if default in choices else choices[0])
-
-    combo = ttk.Combobox(frame, textvariable=choice_var, values=choices,
-                         state="readonly", font=("Microsoft YaHei", 10), width=40)
-    combo.pack(pady=(0, 10))
-
-    countdown_label = ttk.Label(frame, text="", foreground="gray")
-    if timeout > 0:
-        countdown_label.config(text=f"⏱ {timeout} 秒后自动取消")
-    countdown_label.pack()
-
-    btn_frame = ttk.Frame(frame)
-    btn_frame.pack(pady=(10, 0))
-
-    def on_approve():
-        result["status"] = "approved"
-        result["value"] = choice_var.get()
-        root.destroy()
-
-    def on_cancel():
-        root.destroy()
-
-    approve_btn = ttk.Button(btn_frame, text="✓ 确认选择", command=on_approve, width=12)
-    approve_btn.pack(side="left", padx=5)
-
-    cancel_btn = ttk.Button(btn_frame, text="✗ 取消", command=on_cancel, width=12)
-    cancel_btn.pack(side="left", padx=5)
-
-    if timeout > 0:
-        def tick():
-            seconds_left[0] -= 1
-            if seconds_left[0] <= 0:
-                result["status"] = "timeout"
-                root.destroy()
-            else:
-                countdown_label.config(text=f"⏱ {seconds_left[0]} 秒后自动取消")
-                root.after(1000, tick)
-        root.after(1000, tick)
-
-    root.protocol("WM_DELETE_WINDOW", on_cancel)
-    root.bind("<Escape>", lambda e: on_cancel())
-    return result
-
-
-def build_input(root, message, timeout, default):
-    result = {"status": "cancelled", "value": ""}
-    seconds_left = [timeout]
-
-    frame = ttk.Frame(root, padding=20)
-    frame.pack(fill="both", expand=True)
-
-    msg_label = ttk.Label(frame, text=message, wraplength=480, justify="left", font=("Microsoft YaHei", 10))
-    msg_label.pack(pady=(0, 10))
-
-    entry = ttk.Entry(frame, font=("Microsoft YaHei", 10), width=50)
-    if default:
-        entry.insert(0, default)
-    entry.pack(pady=(0, 10))
-    entry.focus_set()
-
-    countdown_label = ttk.Label(frame, text="", foreground="gray")
-    if timeout > 0:
-        countdown_label.config(text=f"⏱ {timeout} 秒后自动取消")
-    countdown_label.pack()
-
-    btn_frame = ttk.Frame(frame)
-    btn_frame.pack(pady=(10, 0))
-
-    def on_approve():
-        result["status"] = "approved"
-        result["value"] = entry.get().strip()
-        root.destroy()
-
-    def on_cancel():
-        root.destroy()
-
-    approve_btn = ttk.Button(btn_frame, text="✓ 提交", command=on_approve, width=12)
-    approve_btn.pack(side="left", padx=5)
-
-    cancel_btn = ttk.Button(btn_frame, text="✗ 取消", command=on_cancel, width=12)
-    cancel_btn.pack(side="left", padx=5)
-
-    if timeout > 0:
-        def tick():
-            seconds_left[0] -= 1
-            if seconds_left[0] <= 0:
-                result["status"] = "timeout"
-                root.destroy()
-            else:
-                countdown_label.config(text=f"⏱ {seconds_left[0]} 秒后自动取消")
-                root.after(1000, tick)
-        root.after(1000, tick)
-
-    root.protocol("WM_DELETE_WINDOW", on_cancel)
-    root.bind("<Return>", lambda e: on_approve())
-    root.bind("<Escape>", lambda e: on_cancel())
-    return result
-
-
-def _load_dialog_ui(locale: str) -> dict:
-    path = _SCRIPT_DIR / "locale" / f"{locale}.json"
-    if not path.exists():
-        path = _SCRIPT_DIR / "locale" / "en.json"
-    with open(path, encoding="utf-8") as f:
-        return json.load(f).get("ui", {})
-
-
-def main():
-    args = parse_args()
-
-    timeout = args.timeout if args.timeout > 0 else 0
-    choices = [c.strip() for c in args.choices.split(",") if c.strip()] if args.choices else []
-
-    ui_cfg = _load_dialog_ui(_WebpageLocale._detect_locale())
-
-    root = tk.Tk()
-    root.title(args.title)
-    root.attributes("-topmost", True)
-    root.resizable(False, False)
-
-    try:
-        root.iconbitmap(default="")
-    except Exception:
-        pass
-
-    if args.type == "choice":
-        if not choices:
-            print(json.dumps({"status": "error", "value": ui_cfg.get("error_no_options", "At least one option is required")}, ensure_ascii=False))
-            sys.exit(1)
-        result = build_choice(root, args.message, choices, timeout, args.default)
-    elif args.type == "input":
-        result = build_input(root, args.message, timeout, args.default)
-    else:
-        result = build_confirm(root, args.message, timeout)
-
-    root.geometry("")
-    root.update_idletasks()
-    w = root.winfo_reqwidth()
-    h = root.winfo_reqheight()
-    sw = root.winfo_screenwidth()
-    sh = root.winfo_screenheight()
-    x = (sw - w) // 2
-    y = (sh - h) // 2
-    root.geometry(f"+{x}+{y}")
-
-    root.mainloop()
-
-    print(json.dumps(result, ensure_ascii=False))
-    sys.exit(0)
-
-
-if __name__ == "__main__":
-    main()

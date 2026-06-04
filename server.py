@@ -10,6 +10,7 @@ import json
 import subprocess
 from pathlib import Path
 
+# ----- 依赖检查 -----
 from _dep_checker import ensure_deps
 ensure_deps({
     "aiohttp": "aiohttp",
@@ -266,7 +267,7 @@ async def pdf_reader(pdf_url: str, max_pages: int = 5, timeout: int = 30) -> str
 
 
 @mcp.tool(output_schema=None)
-async def DDGS_web_search_V20(
+async def DDGS_web_search(
     query: str, 
     max_results: int = 5,
     region: str = "wt-wt",
@@ -383,21 +384,21 @@ async def DDGS_web_search_V20(
 
 # ----- 工具 5: HTTP 网页抓取 (fetch URL content) -----
 @mcp.tool(output_schema=None)
-async def fetch_webpage_toolv2(
-    url: str, 
-    timeout: int = 15, 
-    max_chars: int = 8000
+async def fetch_webpage_tool(
+    url: str,
+    timeout: int = 20,
+    max_tokens: int = 15000,
+    text_only: bool = True,
 ) -> str:
     """
-    打开并抓取 HTTP/HTTPS 网页的纯文本内容。
-    自动提取正文、去除 HTML 标签，适用于阅读文章、抓取文档页面等。
+    V4.1
+    打开并抓取 HTTP/HTTPS 网页内容。
 
     参数:
         url: 网页 URL（必须以 http:// 或 https:// 开头）
-        timeout: 请求超时时间 (秒，默认 15)
-        max_chars: 返回内容最大字符数 (默认 8000)
+        text_only: 是否仅返回纯文本。True=仅正文；False=保留时间作者等元信息、链接和评论区（默认 True）。
     """
-    return await fetch_webpage(url, timeout=timeout, max_chars=max_chars)
+    return await fetch_webpage(url, timeout=timeout, max_tokens=max_tokens, text_only=text_only)
 
 @mcp.tool()
 def add(a: int, b: int) -> int:

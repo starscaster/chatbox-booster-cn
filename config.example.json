@@ -80,5 +80,11 @@
       "rerank_irrelevant_threshold": -24.0,
       "complete_sentence_bonus": 5.0
     }
+  },
+  "playwright": {
+    "headless": true,
+    "idle_timeout": 600,
+    "max_concurrent": 5,
+    "page_timeout_ms": 30000
   }
 }

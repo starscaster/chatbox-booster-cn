@@ -5,3 +5,4 @@ ddgs
 lxml
 requests
 tiktoken
+patchright

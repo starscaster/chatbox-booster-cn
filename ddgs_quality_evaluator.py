@@ -7,6 +7,7 @@ from pathlib import Path
 from urllib.parse import urlparse
 from typing import Tuple, List
 
+# ----- 依赖检查 -----
 from _dep_checker import ensure_deps
 ensure_deps({
     "requests": "requests",
@@ -91,7 +92,7 @@ def _txt(key: str, **kwargs) -> str:
     return text
 
 
-# ==================== 原有的功能函数（核心逻辑不变） ====================
+# ==================== tokens计算 ====================
 
 def _truncate_text_by_tokens(text: str, max_tokens: int = None) -> str:
     if max_tokens is None:
