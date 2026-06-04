@@ -170,7 +170,7 @@ pwd
 
 ### 2. `fetch_webpage_tool` — 网页抓取
 
-打开 HTTP/HTTPS 网页并提取纯文本正文。内置多层反爬机制：浏览器指纹模拟（Chrome/Firefox 多版本轮换）+ Playwright 浏览器引擎回退，可突破绝大多数反爬限制。
+打开 HTTP/HTTPS 网页并提取纯文本正文。内置：浏览器指纹模拟（Chrome/Firefox 多版本轮换）+ Playwright 浏览器引擎，可有效绝突破反爬限制。
 
 | 参数 | 类型 | 说明 |
 |------|------|------|
