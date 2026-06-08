@@ -267,7 +267,7 @@ async def pdf_reader(pdf_url: str, max_pages: int = 5, timeout: int = 30) -> str
 
 
 @mcp.tool(output_schema=None)
-async def DDGS_web_search(
+async def DDGS_web_search_V20(
     query: str, 
     max_results: int = 5,
     region: str = "wt-wt",

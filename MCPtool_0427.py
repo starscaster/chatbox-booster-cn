@@ -484,6 +484,39 @@ def _extract_text_from_html(html: str, text_only: bool = False) -> str:
     return raw.strip()
 
 
+async def _fetch_via_browser_fallback(url, timeout, text_only, max_tokens, raw_html="", extracted_text="", force=True):
+    """Try to fetch via Patchright browser. Returns result string or None."""
+    try:
+        from _playwright_fallback import playwright_fallback_fetch
+        browser_text = await playwright_fallback_fetch(
+            url=url,
+            raw_html=raw_html,
+            extracted_text=extracted_text,
+            timeout=timeout,
+            text_only=text_only,
+            force=force,
+        )
+        if not browser_text:
+            return None
+        tokens = _count_tokens(browser_text)
+        if tokens < 4000:
+            result = _WebpageLocale.get("success_header", code=200)
+            result += f"\n\n{browser_text}"
+            return result
+        if tokens <= max_tokens:
+            result = _WebpageLocale.get("token_length", tokens=tokens, length=len(browser_text))
+            result += f"\n\n{browser_text}"
+            return result
+        truncated_text = _truncate_by_tokens(browser_text, max_tokens)
+        truncated_tokens = _count_tokens(truncated_text)
+        pct = round((1 - truncated_tokens / tokens) * 100)
+        result = _WebpageLocale.get("token_truncated", tokens=truncated_tokens, pct=pct, length=len(truncated_text))
+        result += f"\n\n{truncated_text}"
+        return result
+    except Exception:
+        return None
+
+
 async def fetch_webpage(
     url: str,
     timeout: int = 15,
@@ -524,8 +557,7 @@ async def fetch_webpage(
 
     _IMPERSONATE_CHAIN = ["chrome131", "chrome124", "firefox133"]
 
-    curl_ok = False
-    curl_errors: list[str] = []
+    last_error = ""
     raw_body = ""
     resp_status = 0
 
@@ -541,58 +573,39 @@ async def fetch_webpage(
                 resp_status = resp.status_code
                 raw_body = resp.text
 
-                if 200 <= resp_status < 400:
-                    curl_ok = True
-                    break
+                if resp_status == 403:
+                    # 403 → immediately try browser fallback
+                    last_error = _WebpageLocale.get(
+                        "403_browser_fallback",
+                        url=url,
+                    )
+                    browser_text = await _fetch_via_browser_fallback(url, timeout, text_only, max_tokens, raw_html=raw_body, force=True)
+                    if browser_text:
+                        return browser_text
+                    # browser fallback failed, try next impersonate
+                    continue
 
-                reason = (resp.reason or "").strip() or "unknown"
-                curl_errors.append(
-                    f"[{impersonate_target}] {resp_status} {reason}"
-                )
-                continue
+                if resp_status != 200:
+                    return _WebpageLocale.get(
+                        "status_not_200",
+                        url=url,
+                        code=resp_status,
+                        reason=resp.reason,
+                    )
+
+                break
 
         except curl_requests.RequestsError as e:
-            curl_errors.append(f"[{impersonate_target}] RequestError: {str(e)[:200]}")
+            last_error = str(e)
             continue
         except asyncio.TimeoutError:
             return _WebpageLocale.get("timeout", timeout=timeout)
 
-    if not curl_ok:
-        from _patchright_fallback import playwright_fallback_fetch
-        pw_text = await playwright_fallback_fetch(
-            url=url,
-            raw_html=raw_body,
-            extracted_text="",
-            timeout=timeout,
-            text_only=text_only,
-            force=True,
-        )
-        if pw_text:
-            text = pw_text
-            if text_only:
-                text = _clean_reference_noise(text)
-            tokens = _count_tokens(text)
-            if tokens < 4000:
-                result = _WebpageLocale.get("success_header", code=200)
-                result += f"\n\n{text}"
-                return result
-            if tokens <= max_tokens:
-                result = _WebpageLocale.get("token_length", tokens=tokens, length=len(text))
-                result += f"\n\n{text}"
-                return result
-            truncated_text = _truncate_by_tokens(text, max_tokens)
-            truncated_tokens = _count_tokens(truncated_text)
-            pct = round((1 - truncated_tokens / tokens) * 100)
-            result = _WebpageLocale.get("token_truncated",
-                                         tokens=truncated_tokens,
-                                         pct=pct,
-                                         length=len(truncated_text))
-            result += f"\n\n{truncated_text}"
-            return result
-
-        summary = "; ".join(curl_errors[-3:]) if curl_errors else "no response"
-        return _WebpageLocale.get("curl_blocked_no_browser",
-                                  url=url, curl_detail=summary)
+    else:
+        # All impersonate + browser fallback attempts failed
+        if last_error:
+            return last_error
+        return _WebpageLocale.get("parse_error", type="403", message="all attempts failed")
 
     content_type = resp.headers.get("Content-Type", "")
     is_json = "application/json" in content_type
@@ -608,17 +621,13 @@ async def fetch_webpage(
             text = raw_body
     else:
         text = _extract_text_from_html(raw_body, text_only=text_only)
-        if not text or len(text.strip()) < 200:
-            from _patchright_fallback import playwright_fallback_fetch
-            pw_text = await playwright_fallback_fetch(
-                url=url,
-                raw_html=raw_body,
-                extracted_text=text or "",
-                timeout=timeout,
-                text_only=text_only,
-            )
-            if pw_text:
-                text = pw_text
+
+    # --- Patchright / Playwright fallback for SPA pages or empty results ---
+    _needs_fallback = (not text) and ("text/html" in content_type)
+    if _needs_fallback:
+        browser_result = await _fetch_via_browser_fallback(url, timeout, text_only, max_tokens, raw_html=raw_body, extracted_text=text or "", force=False)
+        if browser_result:
+            return browser_result
 
     if not text:
         return _WebpageLocale.get("empty_content", url=url, code=resp_status)

@@ -26,7 +26,7 @@
 **Chatbox Booster** 是一个 [MCP (Model Context Protocol)](https://modelcontextprotocol.io/) 工具集，专为 AI Chatbox / LLM 客户端设计。它提供一组即插即用的工具，让对话式 AI 突破文本交互的局限，能够：
 
 - 🌐 **实时联网搜索**，获取最新信息
-- 📄 **抓取网页正文**，提取结构化文本（支持浏览器引擎渲染，突破反爬限制）
+- 📄 **抓取网页正文**，提取结构化文本
 - 📚 **检索学术论文**（arXiv），并直接解析 PDF
 - 🖱️ **与用户进行 GUI 交互**——确认、输入、填表
 - 🕒 **获取系统时间**，校准时效性
@@ -38,7 +38,7 @@
 | 类别 | 能力 |
 |------|------|
 | 🌍 网络搜索 | 全网搜索，支持地区/语言过滤、AI 内容评估 |
-| 📝 网页抓取 | 自动提取网页正文，支持浏览器引擎渲染，突破反爬限制 |
+| 📝 网页抓取 | 自动提取网页正文，去除 HTML 标签与噪音 |
 | 🎓 学术检索 | arXiv 论文检索 + PDF 直链解析 |
 | 💬 用户交互 | GUI 确认对话框、单行输入、结构化多题问卷 |
 | ⏰ 系统工具 | 获取当前系统时间 |
@@ -72,10 +72,7 @@ python -m pip install pip==24.0 --no-cache-dir
 # 3. 安装依赖
 pip install -r requirements.txt
 
-# 4. 安装浏览器引擎（用于增强网页抓取，可选但推荐）
-patchright install chromium
-
-# 5. 验证安装
+# 4. 验证安装
 python server.py --help
 ```
 
@@ -170,14 +167,13 @@ pwd
 
 ### 2. `fetch_webpage_tool` — 网页抓取
 
-打开 HTTP/HTTPS 网页并提取纯文本正文。内置：浏览器指纹模拟（Chrome/Firefox 多版本轮换）+ Playwright 浏览器引擎，可有效绝突破反爬限制。
+打开 HTTP/HTTPS 网页并提取纯文本正文。
 
 | 参数 | 类型 | 说明 |
 |------|------|------|
 | `url` | string | 网页 URL（需含协议头） |
-| `timeout` | int | 超时秒数（默认 20） |
-| `max_tokens` | int | 返回最大 token 数（默认 15000） |
-| `text_only` | bool | 仅返回纯文本（默认 true） |
+| `timeout` | int | 超时秒数（默认 15） |
+| `max_chars` | int | 返回最大字符数（默认 8000） |
 
 ### 3. `arxiv_search` — 学术论文搜索
 
@@ -300,10 +296,6 @@ pwd
 | `api.ai_eval.model` | AI 评估模型 | `deepseek-v4-flash` |
 | `api.serper.url` | Serper 搜索 API 地址 | `https://google.serper.dev/search` |
 | `api.serper.api_key` | Serper API Key（可选） | 留空则使用 DDGS |
-| `playwright.headless` | 浏览器无头模式 | `true` |
-| `playwright.idle_timeout` | 浏览器空闲超时秒数 | `600` |
-| `playwright.max_concurrent` | 最大并发浏览器页面数 | `5` |
-| `playwright.page_timeout_ms` | 页面加载超时毫秒数 | `30000` |
 
 ### 📦 完整示例
 
@@ -315,9 +307,9 @@ pwd
   },
   "api": {
     "rerank": {
-      "url": "http://127.0.0.1:20261/v1/rerank",
-      "api_key": "你的 rerank api key",
-      "model": "bge-reranker-v2-m3-Q8_0",
+      "url": "api.siliconflow.cn/v1/rerank",
+      "api_key": "你的硅基流动 api key",
+      "model": "BAAI/bge-reranker-v2-m3",
       "timeout": 10.0,
       "max_tokens": 6144
     },
@@ -333,12 +325,6 @@ pwd
       "url": "https://google.serper.dev/search",
       "api_key": "你的Serper api key"
     }
-  },
-  "playwright": {
-    "headless": true,
-    "idle_timeout": 600,
-    "max_concurrent": 5,
-    "page_timeout_ms": 30000
   }
 }
 ```
