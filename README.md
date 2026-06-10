@@ -2,7 +2,7 @@
 
 > 增强基础 AI Chatbox 功能，赋予其联网搜索、网页抓取、PDF 读取、人机交互等能力。
 
-**作者:** [@starscater](https://github.com/starscater)　|　**语言:** Python 3.10+（推荐 3.12）
+**作者:** [@starscater](https://github.com/starscaster)　|　**语言:** Python 3.10+（推荐 3.12）
 
 ---
 
@@ -58,7 +58,7 @@
 
 ```bash
 # 1. 克隆仓库
-git clone https://github.com/starscater/chatbox-booster.git
+git clone https://github.com/starscaster/chatbox-booster.git
 cd chatbox-booster
 
 # 2. 创建虚拟环境（推荐）
