@@ -7,8 +7,22 @@ from datetime import datetime
 import io
 import sys
 import json
+import shutil
 import subprocess
 from pathlib import Path
+
+
+
+CONFIG_FILE = "config.json"
+EXAMPLE_FILE = "config.example.json"
+if not os.path.exists(CONFIG_FILE):
+    if os.path.exists(EXAMPLE_FILE):
+        shutil.copy(EXAMPLE_FILE, CONFIG_FILE)
+        print(f"📋 已从 {EXAMPLE_FILE} 创建默认的 {CONFIG_FILE}，建议在config.json中配置代理和API key。可以重新启动服务。")
+        sys.exit(0)
+    else:
+        print(f"❌ 缺少 {CONFIG_FILE}，且未找到模板文件 {EXAMPLE_FILE}")
+        sys.exit(1)
 
 # ----- 依赖检查 -----
 from _dep_checker import ensure_deps

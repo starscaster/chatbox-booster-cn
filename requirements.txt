@@ -5,3 +5,5 @@ ddgs
 lxml
 requests
 tiktoken
+curl_cffi
+patchright

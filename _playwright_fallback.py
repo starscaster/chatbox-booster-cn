@@ -11,6 +11,7 @@ from _dep_checker import ensure_deps
 
 ensure_deps({
     "aiohttp": "aiohttp",
+    "patchright": "patchright",
 })
 
 import aiohttp

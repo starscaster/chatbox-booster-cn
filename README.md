@@ -59,21 +59,22 @@
 ```bash
 # 1. 克隆仓库
 git clone https://github.com/starscaster/chatbox-booster-cn.git
-cd chatbox-booster
+cd chatbox-booster-cn
 
 # 2. 创建虚拟环境（推荐）
 python -m venv .venv
 source .venv/bin/activate   # Linux/macOS
-# .venv\Scripts\activate    # Windows
+.venv\Scripts\activate    # Windows
 
-# 2.5  在虚拟环境安装 pip 24.0 版本（Python ≥ 3.12 建议执行，可选）
-python -m pip install pip==24.0 --no-cache-dir
+# 2.5  更新pip，或在虚拟环境安装 pip 26.1.2 版本（建议执行，可选）
+python -m pip install pip==26.1.2 --no-cache-dir
 
 # 3. 安装依赖
-pip install -r requirements.txt
+python -m pip install -r requirements.txt
 
-# 4. 验证安装
-python server.py --help
+
+# 4. 启动服务
+python server.py 
 ```
 
 ---
@@ -139,7 +140,7 @@ pwd
 1. 打开 Chatbox，进入 **设置 → MCP 服务器**
 2. 点击 **添加 MCP 服务器**
 3. 将上方对应系统的 JSON 粘贴到配置框中
-4. 将 `<项目路径>` 替换为实际的绝对路径（例如 `C:/Users/你的用户名/chatbox-booster` 或 `/home/用户/chatbox-booster`）
+4. 将 `<项目路径>` 替换为实际的绝对路径（例如 `C:/Users/你的用户名/chatbox-booster-cn` 或 `/home/用户/chatbox-booster`）
 5. 保存配置，Chatbox 将自动启动 MCP 服务
 6. 在对话中即可使用联网搜索、PDF 阅读等工具
 
@@ -254,13 +255,13 @@ pwd
 
 #### DeepSeek API Key
 
-`ai_eval` 依赖 DeepSeek API 进行搜索内容智能评估。请填入你的 API Key（[获取](https://platform.deepseek.com/)）：
+`ai_eval` 功能依赖LLM进行搜索内容智能评估。建议填入你的 API Key
 
 ```json
 {
   "api": {
     "ai_eval": {
-      "api_key": "你的DeepSeek密钥"
+      "api_key": "你的LLM API 密钥"
     }
   }
 }
