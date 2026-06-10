@@ -2,7 +2,7 @@
 
 > 增强基础 AI Chatbox 功能，赋予其联网搜索、网页抓取、PDF 读取、人机交互等能力。
 
-**作者:** [@starscater](https://github.com/starscaster)　|　**语言:** Python 3.10+（推荐 3.12）
+**作者:** [@starscaster](https://github.com/starscaster)　|　**语言:** Python 3.10+（推荐 3.12）
 
 ---
 

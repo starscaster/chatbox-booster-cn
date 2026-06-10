@@ -13,15 +13,17 @@ from pathlib import Path
 
 
 
-CONFIG_FILE = "config.json"
-EXAMPLE_FILE = "config.example.json"
-if not os.path.exists(CONFIG_FILE):
-    if os.path.exists(EXAMPLE_FILE):
+_SCRIPT_DIR = Path(__file__).resolve().parent
+
+CONFIG_FILE = _SCRIPT_DIR / "config.json"
+EXAMPLE_FILE = _SCRIPT_DIR / "config.example.json"
+if not CONFIG_FILE.exists():
+    if EXAMPLE_FILE.exists():
         shutil.copy(EXAMPLE_FILE, CONFIG_FILE)
-        print(f"📋 已从 {EXAMPLE_FILE} 创建默认的 {CONFIG_FILE}，建议在config.json中配置代理和API key。可以重新启动服务。")
+        print(f"已从 {EXAMPLE_FILE.name} 创建默认的 {CONFIG_FILE.name}，建议在config.json中配置代理和API key。可以重新启动服务。", file=sys.stderr)
         sys.exit(0)
     else:
-        print(f"❌ 缺少 {CONFIG_FILE}，且未找到模板文件 {EXAMPLE_FILE}")
+        print(f"缺少 {CONFIG_FILE.name}，且未找到模板文件 {EXAMPLE_FILE.name}", file=sys.stderr)
         sys.exit(1)
 
 # ----- 依赖检查 -----
@@ -39,8 +41,6 @@ from pypdf import PdfReader
 from ddgs import DDGS
 from ddgs_quality_evaluator import _evaluate_ddgs_quality, _ai_evaluate_quality
 from MCPtool_0427 import fetch_webpage
-
-_SCRIPT_DIR = Path(__file__).resolve().parent
 
 
 def _detect_locale() -> str:
@@ -281,7 +281,7 @@ async def pdf_reader(pdf_url: str, max_pages: int = 5, timeout: int = 30) -> str
 
 
 @mcp.tool(output_schema=None)
-async def DDGS_web_search_V20(
+async def DDGS_web_search(
     query: str, 
     max_results: int = 5,
     region: str = "wt-wt",
@@ -405,7 +405,6 @@ async def fetch_webpage_tool(
     text_only: bool = True,
 ) -> str:
     """
-    V4.1
     打开并抓取 HTTP/HTTPS 网页内容。
 
     参数:
