@@ -23,15 +23,8 @@
 
 ## 📌 简介
 
-**Chatbox Booster** 是一个 [MCP (Model Context Protocol)](https://modelcontextprotocol.io/) 工具集，专为 AI Chatbox / LLM 客户端设计。它提供一组即插即用的工具，让对话式 AI 突破文本交互的局限，能够：
+**Chatbox Booster** 是一个 [MCP (Model Context Protocol)](https://modelcontextprotocol.io/) 工具集，专为 AI Chatbox / LLM 客户端设计。它提供一组即插即用的工具，让对话式 AI 突破文本交互的局限。
 
-- 🌐 **实时联网搜索**，获取最新信息
-- 📄 **抓取网页正文**，提取结构化文本
-- 📚 **检索学术论文**（arXiv），并直接解析 PDF
-- 🖱️ **与用户进行 GUI 交互**——确认、输入、填表
-- 🕒 **获取系统时间**，校准时效性
-
----
 
 ## ✨ 功能特性
 
@@ -99,9 +92,14 @@ pwd
 > - **Windows:** `.venv\Scripts\python.exe`
 > - **macOS / Linux:** `.venv/bin/python`
 
-### 配置 JSON（直接使用，仅需填入路径）
+### Chatbox/Cherry studio 配置指引
 
-以下 JSON 覆盖了本项目的所有工具，**直接复制**到你的 MCP 客户端配置中，将 `<项目路径>` 替换为实际的绝对路径即可：
+#### 方式一：粘贴 JSON
+
+1. 打开 Chatbox/Cherry studio，进入 **设置 → MCP 服务器**
+2. 点击 **添加 MCP 服务器**
+3. 将上方对应系统的 JSON 粘贴到配置框中
+4. 将 `<项目路径>` 替换为实际的绝对路径（例如 `C:/Users/你的用户名/chatbox-booster-cn` 或 `/home/用户/chatbox-booster`）
 
 #### Windows
 
@@ -135,20 +133,22 @@ pwd
 }
 ```
 
-### Chatbox 配置指引
+> ⚠️ **注意**：路径分隔符请使用 `/` 或 `\\`，避免使用单个 `\`（避免转义错误）。
 
-1. 打开 Chatbox，进入 **设置 → MCP 服务器**
-2. 点击 **添加 MCP 服务器**
-3. 将上方对应系统的 JSON 粘贴到配置框中
-4. 将 `<项目路径>` 替换为实际的绝对路径（例如 `C:/Users/你的用户名/chatbox-booster-cn` 或 `/home/用户/chatbox-booster`）
-5. 保存配置，Chatbox 将自动启动 MCP 服务
-6. 在对话中即可使用联网搜索、PDF 阅读等工具
+5. 保存配置
 
-> ⚠️ **注意**：路径分隔符请使用 `/` 或 `\\`，避免使用单个 `\`（Chatbox 中会被转义）。
+
+#### 方式二：可视化 UI 手动添加
+
+1. 打开 Chatbox/Cherry studio **设置 → MCP 服务器**
+2. | **命令** | `<项目路径>\.venv\Scripts\python.exe` |
+3. | **参数** | `<项目路径>\server.py` |
+
+如果没有"参数"选项，则将两者都填入"命令"中
 
 ### Claude Desktop 配置指引
 
-编辑 Claude Desktop 的配置文件 `claude_desktop_config.json`，将上面的 JSON 合并到其中的 `mcpServers` 字段即可。
+编辑 Claude Desktop 的配置文件 `claude_desktop_config.json`，将上面的 JSON 合并到其中的 `mcpServers` 字段。
 
 ---
 
@@ -298,7 +298,7 @@ pwd
 | `api.serper.url` | Serper 搜索 API 地址 | `https://google.serper.dev/search` |
 | `api.serper.api_key` | Serper API Key（可选） | 留空则使用 DDGS |
 
-### 📦 完整示例
+### 📦 config.json完整示例
 
 ```json
 {
