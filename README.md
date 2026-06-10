@@ -2,7 +2,7 @@
 
 > 增强基础 AI Chatbox 功能，赋予其联网搜索、网页抓取、PDF 读取、人机交互等能力。
 
-**作者:** [@starscaster](https://github.com/starscaster)　|　**语言:** Python 3.10+（推荐 3.12）
+**语言:** Python 3.10+（推荐 3.12）
 
 ---
 
@@ -24,6 +24,8 @@
 ## 📌 简介
 
 **Chatbox Booster** 是一个 [MCP (Model Context Protocol)](https://modelcontextprotocol.io/) 工具集，专为 AI Chatbox / LLM 客户端设计。它提供一组即插即用的工具，让对话式 AI 突破文本交互的局限。
+
+---
 
 
 ## ✨ 功能特性
