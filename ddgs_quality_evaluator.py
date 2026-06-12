@@ -371,7 +371,7 @@ OVERALL: Most results are news aggregation pages with low authority and shallow 
             overall_assessment = overall_match.group(1).strip() if overall_match else ""
 
             if not validated:
-                return [{"index": r["index"], "quality_score": 60.1, "result_type": "specific_article"} for r in truncated], ""
+                return [{"index": r["index"], "quality_score": 50.1, "result_type": "specific_article"} for r in truncated], ""
 
             return validated, overall_assessment
 
@@ -379,18 +379,18 @@ OVERALL: Most results are news aggregation pages with low authority and shallow 
             print(_txt("ai_eval_timeout"))
             if attempt < max_attempts - 1:
                 continue
-            return [{"index": r["index"], "quality_score": 60.1, "result_type": "specific_article"} for r in truncated], _txt("ai_eval_timeout")
+            return [{"index": r["index"], "quality_score": 50.1, "result_type": "specific_article"} for r in truncated], _txt("ai_eval_timeout")
         except requests.exceptions.HTTPError as e:
             print(_txt("ai_eval_http_error", error=e))
             if hasattr(e, 'response') and e.response is not None:
                 print(f"[DEBUG] error response body:\n{e.response.text[:1000]}")
             if attempt < max_attempts - 1:
                 continue
-            return [{"index": r["index"], "quality_score": 60.1, "result_type": "specific_article"} for r in truncated], _txt("ai_eval_http_error", error=e)
+            return [{"index": r["index"], "quality_score": 50.1, "result_type": "specific_article"} for r in truncated], _txt("ai_eval_http_error", error=e)
         except Exception as e:
             print(_txt("ai_eval_failed", error=e))
             if attempt < max_attempts - 1:
                 continue
-            return [{"index": r["index"], "quality_score": 60.1, "result_type": "specific_article"} for r in truncated], _txt("ai_eval_failed", error=e)
+            return [{"index": r["index"], "quality_score": 50.1, "result_type": "specific_article"} for r in truncated], _txt("ai_eval_failed", error=e)
         finally:
             session.close()

@@ -51,7 +51,7 @@
   },
   "search_ddgs": {
     "no_results": "未找到相关结果。",
-    "no_qualified": "未找到符合质量要求的结果。",
+    "no_qualified": "返回结果质量较低，尝试重试并更换搜索关键词",
     "error": "DuckDuckGo 搜索过程中发生错误：{error}",
     "quality_label_high": "⭐⭐⭐ 高质量",
     "quality_label_medium": "⭐⭐ 中质量",
@@ -62,7 +62,9 @@
     "filter_summary": "从 {total} 条结果中筛选 {top} 条",
     "quality_score": "质量分",
     "no_title": "无标题",
-    "no_body": "无内容"
+    "no_body": "无内容",
+    "link_label": "链接：{link}",
+    "header": "## DuckDuckGo 搜索结果"
   },
   "search_pdf": {
     "download_failed": "PDF 下载失败，状态码：{code}",

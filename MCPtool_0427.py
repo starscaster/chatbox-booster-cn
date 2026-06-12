@@ -288,6 +288,24 @@ COMMENT_SELECTORS = [
     '//*[@id="disqus_thread"]',
 ]
 
+from _site_rules import SITE_RULES, detect_site as _detect_site
+
+# 通用兜底：未匹配到站点规则时，跳过 class 含这些关键词的侧边栏/推荐区域
+SKIP_CLASS_KEYWORDS = ["sidebar", "aside", "recommend", "related", "hot"]
+
+
+def _apply_generic_skip(tree, container, has_matched_container: bool):
+    """通用兜底：仅在没找到精确内容容器时，跳过侧边栏/推荐区域。"""
+    if has_matched_container:
+        return
+    for keyword in SKIP_CLASS_KEYWORDS:
+        for el in tree.xpath(f'//*[contains(@class, "{keyword}")]'):
+            if el.getparent() is not None:
+                try:
+                    el.getparent().remove(el)
+                except Exception:
+                    pass
+
 
 def _extract_page_metadata(tree) -> str:
     meta_parts: list[str] = []
@@ -354,8 +372,9 @@ def _extract_page_metadata(tree) -> str:
     return ""
 
 
-def _extract_comments(tree, main_container) -> str:
-    for selector in COMMENT_SELECTORS:
+def _extract_comments(tree, main_container, custom_selectors=None) -> str:
+    selectors = custom_selectors or COMMENT_SELECTORS
+    for selector in selectors:
         elements = tree.xpath(selector)
         for el in elements:
             if main_container is not None:
@@ -377,24 +396,85 @@ def _extract_comments(tree, main_container) -> str:
     return ""
 
 
-def _lxml_extract_text(html_text: str, text_only: bool = False) -> str:
+def _lxml_extract_text(html_text: str, text_only: bool = False, url: str = "") -> str:
     try:
         tree = lxml_html.fromstring(html_text)
     except ParseError:
         return ""
 
-    container = _find_content_container(tree)
+    # 检测站点并加载定制规则
+    site = _detect_site(url) if url else None
+    site_rule = SITE_RULES.get(site) if site else None
+
+    # 构建内容选择器：站点定制的优先，再回退到通用
+    if site_rule and site_rule.get("content_selectors"):
+        effective_selectors = site_rule["content_selectors"] + CONTENT_SELECTORS
+    else:
+        effective_selectors = CONTENT_SELECTORS
+
+    container = _find_content_container(tree, effective_selectors)
+    has_matched = container is not None
 
     if container is None:
         body = tree.xpath('//body')
         container = body[0] if body else tree
 
+    # 处理推荐/相关区域：提取文本后截断保留（避免完全删除）
+    recommend_blocks: list[str] = []
+    if site_rule and site_rule.get("recommend_selectors"):
+        rec_limit = site_rule.get("recommend_limit", 5)
+        for rec_sel in site_rule["recommend_selectors"]:
+            for el in tree.xpath(rec_sel):
+                rec_text = _tree_to_text(el, text_only=text_only)
+                if rec_text.strip():
+                    # 按双空行分块，保留前 N 个
+                    chunks = [c.strip() for c in rec_text.split("\n\n") if c.strip()]
+                    if len(chunks) > rec_limit:
+                        chunks = chunks[:rec_limit]
+                        rec_text = "\n\n".join(chunks)
+                    recommend_blocks.append(rec_text)
+                # 从 DOM 树中移除推荐区域
+                try:
+                    p = el.getparent()
+                    if p is not None:
+                        p.remove(el)
+                except Exception:
+                    pass
+
+    # 应用站点定制的 skip_selectors（删除噪声 DOM 子树）
+    if site_rule and site_rule.get("skip_selectors"):
+        for skip_sel in site_rule["skip_selectors"]:
+            for el in tree.xpath(skip_sel):
+                try:
+                    p = el.getparent()
+                    if p is not None:
+                        p.remove(el)
+                except Exception:
+                    pass
+
+    # 通用兜底：无精确容器匹配时，跳过侧边栏/推荐区域
+    _apply_generic_skip(tree, container, has_matched)
+
     text = _tree_to_text(container, text_only=text_only)
 
+    # 追加截断后的推荐内容
+    if recommend_blocks:
+        rec_appendix = "\n\n---\n\n" + "\n\n---\n\n".join(recommend_blocks)
+        text = text.strip() + rec_appendix
+
     if not text_only:
-        comment_text = _extract_comments(tree, container)
-        if comment_text:
-            text = text.strip() + "\n\n---\n\n" + comment_text
+        # 评论区提取：如果站点配置了 comment_api，则跳过 DOM 提取（由调用方异步获取）
+        has_comment_api = site_rule and site_rule.get("comment_api")
+        if has_comment_api:
+            pass  # 评论区由外部异步 API 获取
+        elif site_rule and site_rule.get("comment_selectors"):
+            comment_text = _extract_comments(tree, container, site_rule["comment_selectors"])
+            if comment_text:
+                text = text.strip() + "\n\n---\n\n" + comment_text
+        else:
+            comment_text = _extract_comments(tree, container)
+            if comment_text:
+                text = text.strip() + "\n\n---\n\n" + comment_text
 
         metadata = _extract_page_metadata(tree)
         if metadata:
@@ -403,8 +483,9 @@ def _lxml_extract_text(html_text: str, text_only: bool = False) -> str:
     return text.strip()
 
 
-def _find_content_container(tree):
-    for selector in CONTENT_SELECTORS:
+def _find_content_container(tree, custom_selectors=None):
+    selectors = custom_selectors or CONTENT_SELECTORS
+    for selector in selectors:
         elements = tree.xpath(selector)
         for el in elements:
             if el.tag == "main":
@@ -468,8 +549,8 @@ def _walk(node, parts, text_only: bool = False):
         parts.append(tail)
 
 
-def _extract_text_from_html(html: str, text_only: bool = False) -> str:
-    text = _lxml_extract_text(html, text_only=text_only)
+def _extract_text_from_html(html: str, text_only: bool = False, url: str = "") -> str:
+    text = _lxml_extract_text(html, text_only=text_only, url=url)
     if text:
         return text
 
@@ -498,6 +579,8 @@ async def _fetch_via_browser_fallback(url, timeout, text_only, max_tokens, raw_h
         )
         if not browser_text:
             return None
+        if text_only:
+            browser_text = _clean_reference_noise(browser_text)
         tokens = _count_tokens(browser_text)
         if tokens < 4000:
             result = _WebpageLocale.get("success_header", code=200)
@@ -517,11 +600,22 @@ async def _fetch_via_browser_fallback(url, timeout, text_only, max_tokens, raw_h
         return None
 
 
+def _is_network_error(msg: str) -> bool:
+    msg_lower = msg.lower()
+    for keyword in ("could not resolve host", "connection refused", "connection reset",
+                    "network is unreachable", "host is unreachable", "failed to connect",
+                    "ssl", "certificate", "timed out"):
+        if keyword in msg_lower:
+            return True
+    return False
+
+
 async def fetch_webpage(
     url: str,
-    timeout: int = 15,
+    timeout: int = 20,
     max_tokens: int = 15000,
     text_only: bool = True,
+    include_fallback_flag: bool = False,
 ) -> str:
     """
     Open an HTTP/HTTPS webpage and return the plain text content.
@@ -539,6 +633,23 @@ async def fetch_webpage(
     """
     if not url.startswith(("http://", "https://")):
         return _WebpageLocale.get("invalid_url", url=url)
+
+    # 如果站点配置了 comment_api 且非 text_only，异步获取评论区
+    async def _enrich_with_comments(text: str) -> str:
+        if text_only:
+            return text
+        site = _detect_site(url)
+        if not (site and SITE_RULES.get(site, {}).get("comment_api")):
+            return text
+        if site == "bilibili.com":
+            try:
+                from _bilibili_wbi import fetch_comments
+                comments = await fetch_comments(url, max_replies=20, timeout=timeout)
+                if comments:
+                    text = text.strip() + "\n\n---\n\n" + comments
+            except Exception:
+                pass
+        return text
 
     _BROWSER_HEADERS = {
         "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8,application/signed-exchange;v=b3;q=0.7",
@@ -581,6 +692,9 @@ async def fetch_webpage(
                     )
                     browser_text = await _fetch_via_browser_fallback(url, timeout, text_only, max_tokens, raw_html=raw_body, force=True)
                     if browser_text:
+                        browser_text = await _enrich_with_comments(browser_text)
+                        if include_fallback_flag:
+                            browser_text += "\n\n[FALLBACK: playwright]\n"
                         return browser_text
                     # browser fallback failed, try next impersonate
                     continue
@@ -597,6 +711,8 @@ async def fetch_webpage(
 
         except curl_requests.RequestsError as e:
             last_error = str(e)
+            if _is_network_error(last_error):
+                break  # DNS/connection/SSL errors won't be fixed by changing impersonate
             continue
         except asyncio.TimeoutError:
             return _WebpageLocale.get("timeout", timeout=timeout)
@@ -620,13 +736,17 @@ async def fetch_webpage(
         except json.JSONDecodeError:
             text = raw_body
     else:
-        text = _extract_text_from_html(raw_body, text_only=text_only)
+        text = _extract_text_from_html(raw_body, text_only=text_only, url=url)
 
-    # --- Patchright / Playwright fallback for SPA pages or empty results ---
-    _needs_fallback = (not text) and ("text/html" in content_type)
+    # --- Patchright / Playwright fallback for SPA pages ---
+    from _playwright_fallback import is_spa_shell
+    _needs_fallback = is_spa_shell(raw_body, text or "") and ("text/html" in content_type)
     if _needs_fallback:
         browser_result = await _fetch_via_browser_fallback(url, timeout, text_only, max_tokens, raw_html=raw_body, extracted_text=text or "", force=False)
         if browser_result:
+            browser_result = await _enrich_with_comments(browser_result)
+            if include_fallback_flag:
+                browser_result += "\n\n[FALLBACK: playwright]\n"
             return browser_result
 
     if not text:
@@ -634,6 +754,8 @@ async def fetch_webpage(
 
     if text_only:
         text = _clean_reference_noise(text)
+
+    text = await _enrich_with_comments(text)
 
     tokens = _count_tokens(text)
 

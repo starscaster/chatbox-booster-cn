@@ -107,7 +107,7 @@ async def Serper_web_search(query: str, max_results: int = 5) -> str:
     需要配置API，备用引擎。
 
     参数:
-        query: keyword
+        query: 搜索关键词。输入搜索引擎友好的自然查询语句
         max_results: 返回最大结果数 (default 5)
     """
     api_key = os.getenv("SERPER_API_KEY") or _CONFIG.get("api", {}).get("serper", {}).get("api_key")
@@ -293,7 +293,7 @@ async def DDGS_web_search(
     DuckDuckGo网络搜索,覆盖面更广,智能排序结果。
 
     参数:
-        query: keyword
+        query: 搜索关键词。输入搜索引擎友好的自然查询语句
         max_results: 返回最大结果数 (default 5)
         region: 搜索地域-语言代码，格式 {国家}-{语言} (recommend default wt-wt 无限制/引擎自动匹配)    
                 限制地区/语言（限制地区可能导致代理不稳定）:

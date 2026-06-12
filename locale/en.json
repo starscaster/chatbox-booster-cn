@@ -51,7 +51,7 @@
   },
   "search_ddgs": {
     "no_results": "No relevant results found.",
-    "no_qualified": "No results meeting quality requirements found.",
+    "no_qualified": "Return results quality is low, try to change the search keywords and retry.",
     "error": "Error during DuckDuckGo search: {error}",
     "quality_label_high": "⭐⭐⭐ High Quality",
     "quality_label_medium": "⭐⭐ Medium Quality",

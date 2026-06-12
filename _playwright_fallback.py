@@ -173,7 +173,7 @@ async def playwright_fallback_fetch(
 
     from MCPtool_0427 import _extract_text_from_html
 
-    text = _extract_text_from_html(pw_html, text_only=text_only)
+    text = _extract_text_from_html(pw_html, text_only=text_only, url=url)
     if not text:
         return None
 
